@@ -2,7 +2,7 @@ package kvstore
 
 import (
 	"time"
-	// "fmt"
+	 "fmt"
 )
 type RPC_Join struct {
 	Id []byte
@@ -31,6 +31,19 @@ type Hbeat struct{
 	Rx_time time.Time
 	Node_info Node
 }
+
+type Transaction struct{ 
+	Keys []string
+	Ret_vals []string
+	Args_vals []string
+	Types []int
+}
+func (t *Transaction) init() {
+	t.Keys=make([]string,0)
+	t.Ret_vals=make([]string,0)
+	t.Args_vals=make([]string,0)
+	t.Types=make([]int,0)
+}
 type Node_RPC interface{
 	FindSuccessor_Stub(key string, reply *string) error
 	GetPredecessor_Stub(emp_arg struct{}, reply *string) error
@@ -44,8 +57,23 @@ type Node_RPC interface{
 	WriteKey_Stub(args RPC_WriteKey,emp_reply *struct{}) error
 	DeleteKey_Stub(args RPC_RDKey, emp_reply *struct{}) error
 	GetRemoteData_Stub(replica_number int, data_reply *map[string]string) error
+	TransactionLeader_Stub(t Transaction, val *string) error
+	BusyNode_Stub(emp_arg struct{},reply *string) error
+}
+func (ln *LocalNode) BusyNode_Stub(emp_arg struct{}, reply *string) error {
+	err := ln.BusyNode(reply)
+	fmt.Println("Replied" , *reply, "To Busy Request")
+	return err
 }
 
+func (ln *LocalNode) FreeNode_Stub(emp_arg struct{}, emp_reply *struct{}) error {
+	err := ln.FreeNode()
+	return err
+}
+func (ln *LocalNode) TransactionLeader_Stub(t Transaction, val *string) error {
+	err := ln.TransactionLeader(t,val)
+	return err
+}
 func (ln *LocalNode) FindSuccessor_Stub(key string, reply *string) error {
 	err := ln.FindSuccessor(key,reply)
 	return err

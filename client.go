@@ -5,13 +5,144 @@ import (
     "strconv"
     "log"
     "os"
+    "fmt"
 )
+
+func Client_Transaction(address string, val *string) error {
+
+	fmt.Println("Enter 1 for Write,2 for Read, 3 for Delete and 4 to exit")
+    var choice int 
+    fmt.Scanln(&choice)
+    var t Transaction
+    t.init()
+    for choice!=4 {
+        switch choice {
+            case 1:
+    		fmt.Println("Enter Key to be written against")
+    		var key string
+    		var value string        
+            fmt.Scanln(&key)
+            fmt.Println("Enter value to be written")
+            fmt.Scanln(&value)
+            t.Types=append(t.Types,1)
+            t.Keys=append(t.Keys,key)     
+            t.Args_vals=append(t.Args_vals,value)
+            t.Ret_vals=append(t.Ret_vals,"No return var")
+            case 2:
+    		fmt.Println("Enter Key to be read")
+    		var key string
+            fmt.Scanln(&key)
+            t.Types=append(t.Types,0)
+            t.Keys=append(t.Keys,key)
+            t.Args_vals=append(t.Args_vals,"No args")
+            t.Ret_vals=append(t.Ret_vals,"Return Var")
+            case 3:
+    		fmt.Println("Enter Key to be deleted")
+    		var key string
+            fmt.Scanln(&key)
+            t.Types=append(t.Types,2)
+            t.Keys=append(t.Keys,key)
+          	t.Args_vals=append(t.Args_vals,"No args")
+            t.Ret_vals=append(t.Ret_vals,"No return var")
+          
+            default:
+            fmt.Println("Enter a valid Choice")
+        }
+       fmt.Println("Enter 1 for Write,2 for Read, 3 for Delete and 4 to exit")
+       fmt.Scanln(&choice)
+    
+    }
+   err :=remote_Transaction(address, t, val)
+   return err
+}
 
 func Client_remoteRead(address string, key string, val *string) error {
 	e,_ := remote_ReadKey(address,key,4,val)
 	return e
 }
+func (ln *LocalNode) TransactionLeader(t Transaction, val *string) error {
+	var leaders []string = make([]string,0)
+	var all_leaders []string =make([]string,len(t.Keys))
+	temp_str:=new(string)
+	var e error
+	var repeat bool
+	for i:=range t.Keys {
+		e=ln.FindSuccessor(t.Keys[i],temp_str)
+		if(e!=nil) {
+			log.Fatal("Unexepected Errors in Transaction when looking out for leaders")
+		}
+		for k:=range leaders {
+			if(leaders[k]==*temp_str) {
+				repeat=true
+				break
+			}
+		}
+		if((!repeat)&&(*temp_str!=ln.Address)&&(t.Types[i]!=0)) {
+			leaders=append(leaders,*temp_str)
+		}
+		all_leaders[i]=*temp_str
+	}
+	var replies [](string) = make([](string),len(leaders))
+	fmt.Println("Initiating Pre Commit Messages to ",len(leaders) ," leaders")
+	for i:=range leaders {
+		remote_BusyNode(leaders[i],&replies[i]) // Prepare to commit
+	}
+	//Hbeat_start := time.Now() //Start Timer
+	//for ((time.Since(Hbeat_start))*time.Second<100*ln.config.HeartBeatTime) {
+	//}
+	for i:=range replies {
+		if(replies[i]=="true") {
+			//If even one value is nil, refrain to make changes, and abort
+			fmt.Println("Initiating Freeing up replies to the ",len(leaders) ," leaders blocked by the client")
+			for i:=range leaders {
+				remote_FreeNode(leaders[i]) // Free up the resources reserved
+			}
+			return errors.New("Some Nodes Busy, Aborting...")
+		}
+	}
 
+	//Since everyone is ready go ahead with Transaction
+	for i:=range t.Keys {
+		if(t.Types[i]==0) {	
+				err,Async_Call:=remote_ReadKey(all_leaders[i],t.Keys[i],0,&(t.Ret_vals[i]))
+				fmt.Println("Read Result :",t.Ret_vals[i])
+				if(err!=nil) {
+					fmt.Println("Initiating Freeing up replies to the ",len(leaders) ," leaders blocked by the client")
+					for i:=range leaders {
+						remote_FreeNode(leaders[i]) // Free up the resources reserved
+					}
+					log.Fatal("Unexepected Error in Transaction")
+				}
+				<-Async_Call.Done
+		} else {
+			if(t.Types[i]==1) {
+				err := remote_WriteKey(all_leaders[i],t.Keys[i],t.Args_vals[i],0)
+				if(err!=nil) {
+					fmt.Println("Initiating Freeing up replies to the ",len(leaders) ," leaders blocked by the client")
+					for i:=range leaders {
+						remote_FreeNode(leaders[i]) // Free up the resources reserved
+					}
+					log.Fatal("Unexepected Error in Transaction")
+				}
+			} else if (t.Types[i]==2) {
+				err:=remote_DeleteKey(all_leaders[i],t.Keys[i],0)
+				if(err!=nil) {
+					fmt.Println("Initiating Freeing up replies to the ",len(leaders) ," leaders blocked by the client")
+					for i:=range leaders {
+						remote_FreeNode(leaders[i]) // Free up the resources reserved
+					}
+					log.Fatal("Unexepected Error in Transaction")
+				}
+			}
+		}		
+	}
+	fmt.Println("Initiating Freeing up replies to the ",len(leaders) ," leaders blocked by the client")
+	for i:=range leaders {
+		remote_FreeNode(leaders[i]) // Free up the resources reserved
+	}
+	*val=t.Ret_vals[len(t.Keys)-1]
+	return nil
+}
 func (ln * LocalNode) ReadKey(key string, val *string) error{
 	leader := new(string)
 	e := ln.FindSuccessor(key, leader)
@@ -105,12 +236,10 @@ func (ln *LocalNode) WriteKey(key string, val string) error{
 		return e
 	}
 	e = remote_WriteKey(leader,key,val,0)
-
 	return e
 }
 
 func (ln * LocalNode) WriteKeyLeader(key string, val string) error{
-
 	ln.data[0][key] = val
 	log.SetOutput(os.Stderr)
 	log.Println("Write key: "+ key + " value : " + val + " On Node Address " + ln.Address)
@@ -131,6 +260,7 @@ func (ln * LocalNode) WriteKeyLeader(key string, val string) error{
 		}
 	}
 	return nil
+
 }
 
 func (ln * LocalNode) WriteKeySuccessor(key string, val string, replica_number int) error{
